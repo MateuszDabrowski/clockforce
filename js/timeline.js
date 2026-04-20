@@ -1,11 +1,12 @@
 /* Timeline display — horizontal timezone comparison with draggable time indicator */
 
-import * as clocks from './clocks.js?v=2.3.0';
-import { updateDatetimeInputs, updateResetVisibility, getPickerTz, setPickerTz } from './toolbar.js?v=2.3.0';
-import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.3.0';
-import { getCustomName, saveCustomName, loadBlockers, saveBlockers, addBlocker, removeBlocker } from './persistence.js?v=2.3.0';
+import * as clocks from './clocks.js?v=2.3.1';
+import { updateDatetimeInputs, updateResetVisibility, getPickerTz, setPickerTz } from './toolbar.js?v=2.3.1';
+import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.3.1';
+import { getCustomName, saveCustomName, loadBlockers, saveBlockers, addBlocker, removeBlocker } from './persistence.js?v=2.3.1';
 
-const TOTAL_HOURS = 168; // 7 days
+const LOOKBACK_HOURS = 24; // 1 day of scrollable past
+const TOTAL_HOURS = LOOKBACK_HOURS + 7 * 24; // 1 day back + 7 days forward = 192
 
 let visible = false;
 let dragState = null;
@@ -16,6 +17,68 @@ let savedScrollLeft = null; // preserve scroll position across re-renders
 let focusedBlockerIdx = null; // which blocker has resize handles visible
 
 const BLOCKER_POS_KEY = 'clockforceBlockerPosition';
+const WINDOW_MS = TOTAL_HOURS * 60 * 60 * 1000;
+
+/** Epoch ms of today's midnight in the user's local timezone — the timeline's left edge. */
+function getWindowStart() {
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const realNow = new Date();
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: localTz, year: 'numeric', month: 'numeric', day: 'numeric'
+  }).formatToParts(realNow);
+  const y = parseInt(parts.find(p => p.type === 'year').value, 10);
+  const mo = parseInt(parts.find(p => p.type === 'month').value, 10) - 1;
+  const d = parseInt(parts.find(p => p.type === 'day').value, 10);
+  const localOffset = getOffsetMinutes(localTz, realNow);
+  const todayMidnight = new Date(Date.UTC(y, mo, d, 0, 0) - localOffset * 60000).getTime();
+  return todayMidnight - LOOKBACK_HOURS * 60 * 60 * 1000;
+}
+
+function timeToFraction(epochMs, windowStart = getWindowStart()) {
+  return (epochMs - windowStart) / WINDOW_MS;
+}
+
+function fractionToTimestamp(fraction, windowStart = getWindowStart()) {
+  return windowStart + fraction * WINDOW_MS;
+}
+
+/**
+ * Loads blockers, migrates legacy fraction-only blockers to absolute timestamps
+ * (anchored to today's midnight at migration time), and drops blockers whose
+ * end is before the current window start. Saves any changes back.
+ */
+function normalizeBlockers() {
+  const raw = loadBlockers();
+  const windowStart = getWindowStart();
+  let changed = false;
+  const out = [];
+
+  for (const b of raw) {
+    let blocker = b;
+    // One-time migration: legacy { startFraction, endFraction } → { startTime, endTime }
+    if (blocker && blocker.startTime === undefined && blocker.startFraction !== undefined) {
+      blocker = {
+        name: blocker.name,
+        startTime: windowStart + blocker.startFraction * WINDOW_MS,
+        endTime: windowStart + blocker.endFraction * WINDOW_MS,
+      };
+      changed = true;
+    }
+    if (!blocker || typeof blocker.startTime !== 'number' || typeof blocker.endTime !== 'number') {
+      changed = true;
+      continue;
+    }
+    // Drop blockers entirely in the past (endTime at or before window start)
+    if (blocker.endTime <= windowStart) {
+      changed = true;
+      continue;
+    }
+    out.push(blocker);
+  }
+
+  if (changed) saveBlockers(out);
+  return out;
+}
 
 function getBlockerRowPosition() {
   const v = localStorage.getItem(BLOCKER_POS_KEY);
@@ -233,7 +296,8 @@ export function render() {
   const localParts = new Intl.DateTimeFormat('en-US', {
     timeZone: localTz, hour: 'numeric', minute: 'numeric', hour12: false
   }).formatToParts(realNow);
-  const currentLocalH = parseInt(localParts.find(p => p.type === 'hour')?.value || '0', 10)
+  const currentLocalH = LOOKBACK_HOURS
+    + parseInt(localParts.find(p => p.type === 'hour')?.value || '0', 10)
     + parseInt(localParts.find(p => p.type === 'minute')?.value || '0', 10) / 60;
 
   // Split layout: fixed left panel + scrollable right panel
@@ -324,6 +388,12 @@ export function render() {
       icon.className = 'md-tl__tz-icon';
       icon.innerHTML = '<svg viewBox="0 0 16 16" fill="currentColor" width="14" height="14"><path d="M8 2L2 7.5V14h4.5v-4h3v4H14V7.5L8 2z"/></svg>';
       icon.title = 'Local timezone';
+      nameRow.appendChild(icon);
+    } else if (clockData.fromSharer) {
+      const icon = document.createElement('span');
+      icon.className = 'md-tl__tz-icon';
+      icon.innerHTML = '<svg viewBox="0 0 520 520" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M272 417l-21-3-21-6c-4-1-9 0-12 3l-5 5a79 79 0 01-106 6 77 77 0 01-4-112l76-76c10-10 22-16 34-20a79 79 0 0174 20l10 13c4 7 13 8 18 2l28-28c4-4 4-10 1-15l-14-16a128 128 0 00-71-37 143 143 0 00-124 37l-73 73C9 316 5 402 56 456c53 58 143 59 198 4l25-25c7-5 2-17-7-18M456 58c-55-51-141-47-193 6l-23 22c-7 7-2 19 7 20 14 1 28 4 42 8 4 1 9 0 12-3l5-5c29-29 76-32 106-6 34 29 35 81 4 112l-76 76a85 85 0 01-34 20 79 79 0 01-74-20l-10-13c-4-7-13-8-18-2l-28 28c-4 4-4 10-1 15l14 16a130 130 0 0070 37 143 143 0 00124-37l76-76c56-55 54-145-3-198"/></svg>';
+      icon.title = "Link creator's local timezone";
       nameRow.appendChild(icon);
     } else if (isSalesforce) {
       const icon = document.createElement('span');
@@ -418,8 +488,10 @@ export function render() {
     rowData.push({ tz, displayName, diffHours, use24h: clocks.getUse24hForTz(tz) });
   });
 
-  // Time Block row — always visible, positioned among timezone rows
-  const blockers = loadBlockers();
+  // Time Block row — always visible, positioned among timezone rows.
+  // normalizeBlockers() migrates legacy fraction-only blockers and drops expired ones.
+  const blockers = normalizeBlockers();
+  const windowStart = getWindowStart();
   const blockerRowElements = { fixedRow: null, scrollRow: null };
   {
     // Fixed panel: blocker label + info
@@ -456,7 +528,11 @@ export function render() {
       const nearestHour = Math.round(nowFraction * TOTAL_HOURS) / TOTAL_HOURS;
       const oneHour = 1 / TOTAL_HOURS;
       const startF = Math.min(nearestHour, 1 - oneHour);
-      addBlocker({ name, startFraction: startF, endFraction: startF + oneHour });
+      addBlocker({
+        name,
+        startTime: fractionToTimestamp(startF),
+        endTime: fractionToTimestamp(startF + oneHour),
+      });
       render();
     });
     blockerLabel.appendChild(quickAddBtn);
@@ -467,8 +543,9 @@ export function render() {
 
     if (blockers.length > 0) {
       // Calculate total duration of all time blocks
-      const totalFraction = blockers.reduce((sum, b) => sum + (b.endFraction - b.startFraction), 0);
-      const totalMinutes = Math.round(totalFraction * TOTAL_HOURS * 60);
+      const totalMinutes = Math.round(
+        blockers.reduce((sum, b) => sum + (b.endTime - b.startTime), 0) / 60000
+      );
       const totalH = Math.floor(totalMinutes / 60);
       const totalM = totalMinutes % 60;
       const totalLabel = document.createElement('span');
@@ -499,16 +576,37 @@ export function render() {
     }
 
     blockers.forEach((b, idx) => {
+      // Convert absolute timestamps → window-relative fractions for rendering & interaction
+      const bStartFraction = timeToFraction(b.startTime, windowStart);
+      const bEndFraction = timeToFraction(b.endTime, windowStart);
+
       const block = document.createElement('div');
       block.className = 'md-tl__blocker';
-      block.style.left = `${b.startFraction * 100}%`;
-      block.style.width = `${(b.endFraction - b.startFraction) * 100}%`;
+      block.style.left = `${bStartFraction * 100}%`;
+      block.style.width = `${(bEndFraction - bStartFraction) * 100}%`;
       block.title = b.name;
 
       const blockLabel = document.createElement('span');
       blockLabel.className = 'md-tl__blocker-name';
       blockLabel.textContent = b.name;
       block.appendChild(blockLabel);
+
+      block.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.md-tl__blocker-handle')) return;
+        e.stopPropagation();
+        e.preventDefault();
+        const current = loadBlockers()[idx]?.name ?? b.name;
+        const next = window.prompt('Rename time block:', current);
+        if (next === null) return;
+        const trimmed = next.trim();
+        if (!trimmed || trimmed === current) return;
+        const all = loadBlockers();
+        if (!all[idx]) return;
+        all[idx].name = trimmed;
+        saveBlockers(all);
+        focusedBlockerIdx = idx;
+        render();
+      });
 
       // Resize handles on left and right edges
       const handleLeft = document.createElement('div');
@@ -524,8 +622,8 @@ export function render() {
         e.stopPropagation();
         e.preventDefault();
         const stripRect = blockerStrip.getBoundingClientRect();
-        const origStart = b.startFraction;
-        const origEnd = b.endFraction;
+        const origStart = bStartFraction;
+        const origEnd = bEndFraction;
         const minWidth = 1 / (TOTAL_HOURS * 4); // 15 min minimum
 
         const onMove = (me) => {
@@ -543,7 +641,7 @@ export function render() {
           document.body.style.userSelect = '';
           if (block._resizeStart !== undefined) {
             const allBlockers = loadBlockers();
-            allBlockers[idx].startFraction = block._resizeStart;
+            allBlockers[idx].startTime = fractionToTimestamp(block._resizeStart, windowStart);
             saveBlockers(allBlockers);
             delete block._resizeStart;
             focusedBlockerIdx = idx;
@@ -560,7 +658,7 @@ export function render() {
         e.stopPropagation();
         e.preventDefault();
         const stripRect = blockerStrip.getBoundingClientRect();
-        const origStart = b.startFraction;
+        const origStart = bStartFraction;
         const minWidth = 1 / (TOTAL_HOURS * 4); // 15 min minimum
 
         const onMove = (me) => {
@@ -577,7 +675,7 @@ export function render() {
           document.body.style.userSelect = '';
           if (block._resizeEnd !== undefined) {
             const allBlockers = loadBlockers();
-            allBlockers[idx].endFraction = block._resizeEnd;
+            allBlockers[idx].endTime = fractionToTimestamp(block._resizeEnd, windowStart);
             saveBlockers(allBlockers);
             delete block._resizeEnd;
             focusedBlockerIdx = idx;
@@ -594,10 +692,10 @@ export function render() {
         if (e.target.closest('.md-tl__blocker-handle')) return;
         e.stopPropagation();
         e.preventDefault();
-        const blockerWidth = b.endFraction - b.startFraction;
+        const blockerWidth = bEndFraction - bStartFraction;
         const stripRect = blockerStrip.getBoundingClientRect();
         const startMouseX = e.clientX;
-        const startLeft = b.startFraction;
+        const startLeft = bStartFraction;
         let didDrag = false;
         const wasFocused = block.classList.contains('md-tl__blocker--focused');
 
@@ -622,8 +720,9 @@ export function render() {
           if (didDrag) {
             if (block._dragFraction !== undefined) {
               const allBlockers = loadBlockers();
-              allBlockers[idx].startFraction = block._dragFraction;
-              allBlockers[idx].endFraction = block._dragFraction + blockerWidth;
+              const newStartFraction = block._dragFraction;
+              allBlockers[idx].startTime = fractionToTimestamp(newStartFraction, windowStart);
+              allBlockers[idx].endTime = fractionToTimestamp(newStartFraction + blockerWidth, windowStart);
               saveBlockers(allBlockers);
               delete block._dragFraction;
             }
@@ -639,7 +738,7 @@ export function render() {
             } else {
               focusedBlockerIdx = null;
             }
-            showBlockPreview(b.startFraction, b.startFraction + blockerWidth);
+            showBlockPreview(bStartFraction, bStartFraction + blockerWidth);
           }
         };
 
@@ -655,7 +754,7 @@ export function render() {
         block.classList.add('md-tl__blocker--focused');
         // Defer preview update until strip is in DOM
         requestAnimationFrame(() => {
-          showBlockPreview(b.startFraction, b.endFraction);
+          showBlockPreview(bStartFraction, bEndFraction);
         });
       }
     });
@@ -851,7 +950,11 @@ export function render() {
     if (!savedRange) return;
     const name = prompt('Time Block name:', 'Available');
     if (!name) return;
-    addBlocker({ name, startFraction: savedRange.startFraction, endFraction: savedRange.endFraction });
+    addBlocker({
+      name,
+      startTime: fractionToTimestamp(savedRange.startFraction),
+      endTime: fractionToTimestamp(savedRange.endFraction),
+    });
     render();
   });
   wrapper.appendChild(blockerBtn);
@@ -939,7 +1042,7 @@ function positionNowLine(wrapper, refStrip) {
   const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
   const s = parseInt(parts.find(p => p.type === 'second')?.value || '0', 10);
 
-  const fraction = (h + m / 60 + s / 3600) / TOTAL_HOURS;
+  const fraction = (LOOKBACK_HOURS + h + m / 60 + s / 3600) / TOTAL_HOURS;
   nowLine.style.left = `${fraction * refStrip.offsetWidth}px`;
 }
 
@@ -955,7 +1058,7 @@ function positionIndicator(wrapper, refStrip, ref) {
   const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
   const s = parseInt(parts.find(p => p.type === 'second')?.value || '0', 10);
 
-  const fraction = (h + m / 60 + s / 3600) / TOTAL_HOURS;
+  const fraction = (LOOKBACK_HOURS + h + m / 60 + s / 3600) / TOTAL_HOURS;
   const leftPx = fraction * refStrip.offsetWidth;
   indicator.style.left = `${leftPx}px`;
 
@@ -1000,8 +1103,9 @@ function updateFooter(wrapper, refStrip, ref, rowData, use24h) {
 
 function applyTimeFromFraction(fraction, localTz) {
   const totalMinutes = Math.round(fraction * TOTAL_HOURS * 60);
-  const h = Math.floor(totalMinutes / 60) % 24;
-  const dayOffset = Math.floor(totalMinutes / 60 / 24);
+  const localH = Math.floor(totalMinutes / 60) - LOOKBACK_HOURS;
+  const h = ((localH % 24) + 24) % 24;
+  const dayOffset = Math.floor(localH / 24);
   const m = totalMinutes % 60;
 
   const realNow = new Date(); // always use real time as base, not override
@@ -1308,23 +1412,12 @@ function getCurrentFraction(ref) {
   const h = parseInt(parts.find(p => p.type === 'hour')?.value || '0', 10);
   const m = parseInt(parts.find(p => p.type === 'minute')?.value || '0', 10);
   const s = parseInt(parts.find(p => p.type === 'second')?.value || '0', 10);
-  return (h + m / 60 + s / 3600) / TOTAL_HOURS;
+  return (LOOKBACK_HOURS + h + m / 60 + s / 3600) / TOTAL_HOURS;
 }
 
 function getDateAtLocalHour(ref, tz, localH, diffHours) {
   try {
-    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    // Always use real current time as base — timeline grid starts from today's midnight
-    const realNow = new Date();
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: localTz, year: 'numeric', month: 'numeric', day: 'numeric'
-    }).formatToParts(realNow);
-    const y = parseInt(parts.find(p => p.type === 'year').value, 10);
-    const mo = parseInt(parts.find(p => p.type === 'month').value, 10) - 1;
-    const d = parseInt(parts.find(p => p.type === 'day').value, 10);
-    const localOffset = getOffsetMinutes(localTz, realNow);
-    const dayStart = new Date(Date.UTC(y, mo, d, 0, 0) - localOffset * 60000);
-    const targetTime = new Date(dayStart.getTime() + localH * 3600000);
+    const targetTime = new Date(getWindowStart() + localH * 3600000);
     return new Intl.DateTimeFormat('en-GB', {
       timeZone: tz, day: '2-digit', month: 'short'
     }).format(targetTime);
@@ -1335,18 +1428,7 @@ function getDateAtLocalHour(ref, tz, localH, diffHours) {
 
 function getDayNameAtLocalHour(ref, tz, localH) {
   try {
-    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    // Always use real current time as base — timeline grid starts from today's midnight
-    const realNow = new Date();
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: localTz, year: 'numeric', month: 'numeric', day: 'numeric'
-    }).formatToParts(realNow);
-    const y = parseInt(parts.find(p => p.type === 'year').value, 10);
-    const mo = parseInt(parts.find(p => p.type === 'month').value, 10) - 1;
-    const d = parseInt(parts.find(p => p.type === 'day').value, 10);
-    const localOffset = getOffsetMinutes(localTz, realNow);
-    const dayStart = new Date(Date.UTC(y, mo, d, 0, 0) - localOffset * 60000);
-    const targetTime = new Date(dayStart.getTime() + localH * 3600000);
+    const targetTime = new Date(getWindowStart() + localH * 3600000);
     return new Intl.DateTimeFormat('en-US', {
       timeZone: tz, weekday: 'short'
     }).format(targetTime);
@@ -1357,20 +1439,9 @@ function getDayNameAtLocalHour(ref, tz, localH) {
 
 function getDateAtFraction(fraction, tz) {
   try {
-    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const totalMinutes = Math.round(fraction * TOTAL_HOURS * 60);
     const localH = Math.floor(totalMinutes / 60);
-    // Always use real current time as base — timeline grid starts from today's midnight
-    const realNow = new Date();
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: localTz, year: 'numeric', month: 'numeric', day: 'numeric'
-    }).formatToParts(realNow);
-    const y = parseInt(parts.find(p => p.type === 'year').value, 10);
-    const mo = parseInt(parts.find(p => p.type === 'month').value, 10) - 1;
-    const d = parseInt(parts.find(p => p.type === 'day').value, 10);
-    const localOffset = getOffsetMinutes(localTz, realNow);
-    const dayStart = new Date(Date.UTC(y, mo, d, 0, 0) - localOffset * 60000);
-    const targetTime = new Date(dayStart.getTime() + localH * 3600000);
+    const targetTime = new Date(getWindowStart() + localH * 3600000);
     return new Intl.DateTimeFormat('en-GB', {
       timeZone: tz, weekday: 'short', day: '2-digit', month: 'short'
     }).format(targetTime);
@@ -1407,7 +1478,7 @@ function updateInfoColumn(fixedPanel, rowData, fraction, _use24h, isRange, range
 
 function fractionToTime(fraction, diffHours) {
   const totalMinutes = Math.round(fraction * TOTAL_HOURS * 60);
-  const localH = Math.floor(totalMinutes / 60);
+  const localH = Math.floor(totalMinutes / 60) - LOOKBACK_HOURS;
   const localM = totalMinutes % 60;
   const rawTzH = localH + diffHours;
   const tzH = ((rawTzH % 24) + 24) % 24;

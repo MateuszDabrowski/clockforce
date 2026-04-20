@@ -1,8 +1,8 @@
 /* Save/Load — Browser slots, JSON export/import, URL sharing */
 /* Modals follow Diagramforce UX patterns */
 
-import * as clocks from './clocks.js?v=2.3.0';
-import { loadCustomNames, saveCustomName, loadBlockers, saveBlockers } from './persistence.js?v=2.3.0';
+import * as clocks from './clocks.js?v=2.3.1';
+import { loadCustomNames, saveCustomName, loadBlockers, saveBlockers } from './persistence.js?v=2.3.1';
 
 const SAVE_SLOTS_KEY = 'clockforceSaves';
 
@@ -248,6 +248,10 @@ export function importJSON(toast) {
 // --- Share as URL (dynamic modal with copyable link) ---
 
 export function shareURL(toast) {
+  showShareModal();
+}
+
+function buildShareUrl(includeSharer) {
   const state = getState();
   const compact = {
     c: state.clocks.map(c => ({ t: c.timezone, l: c.isLocal || false })),
@@ -256,14 +260,16 @@ export function shareURL(toast) {
     n: state.customNames,
     b: state.blockers.length > 0 ? state.blockers : undefined
   };
-
+  if (includeSharer) {
+    compact.sl = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  }
   const encoded = btoa(JSON.stringify(compact));
-  const url = `${location.origin}${location.pathname}?cfg=${encodeURIComponent(encoded)}`;
-
-  showShareModal(url);
+  return `${location.origin}${location.pathname}?cfg=${encodeURIComponent(encoded)}`;
 }
 
-function showShareModal(url) {
+const SHARE_LINK_SVG = '<svg viewBox="0 0 520 520" fill="currentColor" width="14" height="14" aria-hidden="true"><path d="M272 417l-21-3-21-6c-4-1-9 0-12 3l-5 5a79 79 0 01-106 6 77 77 0 01-4-112l76-76c10-10 22-16 34-20a79 79 0 0174 20l10 13c4 7 13 8 18 2l28-28c4-4 4-10 1-15l-14-16a128 128 0 00-71-37 143 143 0 00-124 37l-73 73C9 316 5 402 56 456c53 58 143 59 198 4l25-25c7-5 2-17-7-18M456 58c-55-51-141-47-193 6l-23 22c-7 7-2 19 7 20 14 1 28 4 42 8 4 1 9 0 12-3l5-5c29-29 76-32 106-6 34 29 35 81 4 112l-76 76a85 85 0 01-34 20 79 79 0 01-74-20l-10-13c-4-7-13-8-18-2l-28 28c-4 4-4 10-1 15l14 16a130 130 0 0070 37 143 143 0 00124-37l76-76c56-55 54-145-3-198"/></svg>';
+
+function showShareModal() {
   document.querySelector('.md-share-modal')?.remove();
 
   const wrapper = document.createElement('div');
@@ -285,6 +291,16 @@ function showShareModal(url) {
           Anyone with this link can open a copy of your clock configuration:
         </p>
         <input type="text" class="md-share-modal__url" readonly spellcheck="false">
+        <label class="md-share-modal__option">
+          <input type="checkbox" class="md-share-modal__checkbox" id="md-share-include-sharer">
+          <span class="md-share-modal__option-box" aria-hidden="true">
+            <svg class="md-share-modal__option-check" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 8l3 3 7-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none"/></svg>
+          </span>
+          <span class="md-share-modal__option-label">
+            <span class="md-share-modal__option-icon">${SHARE_LINK_SVG}</span>
+            Include my local timezone for the recipient
+          </span>
+        </label>
       </div>
       <div class="md-modal__footer">
         <button class="md-modal__btn md-modal__btn--secondary md-share-modal__close-btn">Close</button>
@@ -296,14 +312,18 @@ function showShareModal(url) {
   document.body.appendChild(wrapper);
 
   const urlInput = wrapper.querySelector('.md-share-modal__url');
-  urlInput.value = url;
+  const checkbox = wrapper.querySelector('.md-share-modal__checkbox');
+  const refreshUrl = () => { urlInput.value = buildShareUrl(checkbox.checked); };
+  refreshUrl();
 
   const ac = new AbortController();
   const close = () => { wrapper.remove(); ac.abort(); };
   const copyBtn = wrapper.querySelector('.md-share-modal__copy-btn');
 
+  checkbox.addEventListener('change', refreshUrl, { signal: ac.signal });
+
   copyBtn.addEventListener('click', () => {
-    navigator.clipboard.writeText(url).then(() => {
+    navigator.clipboard.writeText(urlInput.value).then(() => {
       copyBtn.textContent = 'Copied!';
       copyBtn.style.borderColor = '#43A047';
       copyBtn.style.background = '#43A047';
@@ -352,6 +372,14 @@ export function loadFromURL() {
     };
 
     if (state.clocks.length === 0) return false;
+
+    if (typeof compact.sl === 'string' && compact.sl.length > 0 && compact.sl.length < 100) {
+      const recipLocal = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const isDuplicate = state.clocks.some(c => c.timezone === compact.sl);
+      if (compact.sl !== recipLocal && !isDuplicate) {
+        state.clocks.push({ timezone: compact.sl, isLocal: false, fromSharer: true });
+      }
+    }
 
     localStorage.setItem('clocks', JSON.stringify(state.clocks));
     localStorage.setItem('timeFormat', state.timeFormat);

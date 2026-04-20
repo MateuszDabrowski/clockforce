@@ -1,13 +1,13 @@
 /* App entry point — module orchestration */
 
-import * as theme from './theme.js?v=2.3.0';
-import * as clocks from './clocks.js?v=2.3.0';
-import * as mce from './mce.js?v=2.3.0';
-import * as toolbar from './toolbar.js?v=2.3.0';
-import * as sidebarTz from './sidebar-tz.js?v=2.3.0';
-import * as sidebarScripts from './sidebar-scripts.js?v=2.3.0';
-import * as timeline from './timeline.js?v=2.3.0';
-import * as saveload from './saveload.js?v=2.3.0';
+import * as theme from './theme.js?v=2.3.1';
+import * as clocks from './clocks.js?v=2.3.1';
+import * as mce from './mce.js?v=2.3.1';
+import * as toolbar from './toolbar.js?v=2.3.1';
+import * as sidebarTz from './sidebar-tz.js?v=2.3.1';
+import * as sidebarScripts from './sidebar-scripts.js?v=2.3.1';
+import * as timeline from './timeline.js?v=2.3.1';
+import * as saveload from './saveload.js?v=2.3.1';
 
 // Toast notification
 let toastTimeout;
