@@ -1,9 +1,9 @@
 /* Timeline display — horizontal timezone comparison with draggable time indicator */
 
-import * as clocks from './clocks.js?v=2.4.0';
-import { updateDatetimeInputs, updateResetVisibility, getPickerTz, setPickerTz } from './toolbar.js?v=2.4.0';
-import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.4.0';
-import { getCustomName, saveCustomName, loadBlockers, saveBlockers, addBlocker, removeBlocker } from './persistence.js?v=2.4.0';
+import * as clocks from './clocks.js?v=2.4.1';
+import { updateDatetimeInputs, updateResetVisibility, getPickerTz, setPickerTz } from './toolbar.js?v=2.4.1';
+import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.4.1';
+import { getCustomName, saveCustomName, loadBlockers, saveBlockers, addBlocker, removeBlocker } from './persistence.js?v=2.4.1';
 
 const LOOKBACK_HOURS = 24; // 1 day of scrollable past
 const TOTAL_HOURS = LOOKBACK_HOURS + 7 * 24; // 1 day back + 7 days forward = 192

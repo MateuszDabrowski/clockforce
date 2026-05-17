@@ -1,10 +1,10 @@
 /* Left sidebar — Code snippets panel */
 
-import * as mce from './mce.js?v=2.4.0';
-import * as clocks from './clocks.js?v=2.4.0';
-import { getOffsetString, isOffsetStale } from './timezones.js?v=2.4.0';
-import { highlightSQL, highlightAMPScript, highlightSSJS } from './syntax.js?v=2.4.0';
-import { setupDragHandle } from './drag-handle.js?v=2.4.0';
+import * as mce from './mce.js?v=2.4.1';
+import * as clocks from './clocks.js?v=2.4.1';
+import { getOffsetString, isOffsetStale } from './timezones.js?v=2.4.1';
+import { highlightSQL, highlightAMPScript, highlightSSJS } from './syntax.js?v=2.4.1';
+import { setupDragHandle } from './drag-handle.js?v=2.4.1';
 
 let currentScripts = null;
 let currentIsLocal = false;

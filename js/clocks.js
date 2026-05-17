@@ -1,7 +1,7 @@
 /* Clock rendering, animation, and state management */
 
-import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.4.0';
-import { saveClocks, loadClocks, getCustomName, saveCustomName } from './persistence.js?v=2.4.0';
+import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.4.1';
+import { saveClocks, loadClocks, getCustomName, saveCustomName } from './persistence.js?v=2.4.1';
 
 // State
 let clocks = [];

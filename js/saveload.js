@@ -1,8 +1,8 @@
 /* Save/Load — Browser slots, JSON export/import, URL sharing */
 /* Modals follow Diagramforce UX patterns */
 
-import * as clocks from './clocks.js?v=2.4.0';
-import { loadCustomNames, saveCustomName, loadBlockers, saveBlockers, safeSetItem } from './persistence.js?v=2.4.0';
+import * as clocks from './clocks.js?v=2.4.1';
+import { loadCustomNames, saveCustomName, loadBlockers, saveBlockers, safeSetItem } from './persistence.js?v=2.4.1';
 
 const SAVE_SLOTS_KEY = 'clockforceSaves';
 
