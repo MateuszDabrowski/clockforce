@@ -1,9 +1,9 @@
 /* Right sidebar — Timezone picker with navbar search */
 
-import { getProcessedTimezones, findMatchingAlias, findMatchingAbbr } from './timezones.js?v=2.3.1';
-import * as clocks from './clocks.js?v=2.3.1';
-import { getCustomName, saveCustomName } from './persistence.js?v=2.3.1';
-import { setupDragHandle } from './drag-handle.js?v=2.3.1';
+import { getProcessedTimezones, findMatchingAlias, findMatchingAbbr } from './timezones.js?v=2.4.0';
+import * as clocks from './clocks.js?v=2.4.0';
+import { getCustomName, saveCustomName } from './persistence.js?v=2.4.0';
+import { setupDragHandle } from './drag-handle.js?v=2.4.0';
 
 // SVG icons
 const ICON_ADD = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 3v10M3 8h10"/></svg>';
@@ -89,7 +89,9 @@ function renderTimezoneList(filter = '') {
 
     const isUsed = usedTimezones.includes(data.id);
     const clockIndex = isUsed ? clocks.getClocks().findIndex(c => c.timezone === data.id) : -1;
-    const isProtected = isUsed && (clocks.getClocks()[clockIndex]?.isLocal || data.id === 'Etc/GMT+6');
+    // v2.4.0: only SFMC stays pinned. The local-tz row is removable so users
+    // can do focused, recipient-only screenshots.
+    const isProtected = isUsed && data.id === 'Etc/GMT+6';
     const li = document.createElement('li');
     li.className = 'md-tz-item' + (isUsed ? ' md-tz-item--added' : '') + (isProtected ? ' md-tz-item--protected' : '');
     li.tabIndex = (isUsed && isProtected) ? -1 : 0;

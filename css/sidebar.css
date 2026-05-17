@@ -328,6 +328,12 @@
   border-color: var(--brand-blue);
 }
 
+/* Stale-IANA divergence: stronger red so practitioners notice before copying. */
+.md-scripts__notice--warning {
+  background-color: rgba(217, 53, 53, 0.12);
+  border-color: #d93535;
+}
+
 .md-scripts__notice-btn {
   display: inline-block;
   margin-top: var(--spacing-xs);

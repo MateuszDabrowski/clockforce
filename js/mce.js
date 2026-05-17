@@ -1,7 +1,7 @@
 /* MCE date conversion and script generation */
 
-import { getTzByIana, getOffsetMinutes } from './timezones.js?v=2.3.1';
-import * as clocks from './clocks.js?v=2.3.1';
+import { getTzByIana, getOffsetMinutes } from './timezones.js?v=2.4.0';
+import * as clocks from './clocks.js?v=2.4.0';
 
 let scriptsPanel = null;
 
@@ -38,57 +38,55 @@ export function applyMceDate(inputVal) {
 }
 
 /**
- * Find DST transition dates for a timezone in a given year.
- * Returns { dstStart: 'MM-DD', dstEnd: 'MM-DD' } or null if no DST.
+ * Hemisphere-agnostic DST detection with minute-precision transition timestamps.
+ *
+ * Returns one of:
+ *   { hasDST: false }
+ *   { hasDST: true, springTransition: Date, fallTransition: Date,
+ *     standardOffset: number, dstOffset: number }
+ *
+ * springTransition = the moment DST begins (clocks jump forward).
+ * fallTransition   = the moment DST ends   (clocks fall back).
+ * Northern hemisphere: spring < fall in calendar order.
+ * Southern hemisphere: fall < spring in calendar order (DST spans Jan).
  */
-function findDSTTransitions(iana, year) {
-  const jan = new Date(year, 0, 1);
-  const jul = new Date(year, 6, 1);
-  const janOff = getOffsetMinutes(iana, jan);
-  const julOff = getOffsetMinutes(iana, jul);
-  if (janOff === julOff) return null;
+export function getDSTTransitions(iana, year) {
+  const jan1 = new Date(Date.UTC(year, 0, 1));
+  const jul1 = new Date(Date.UTC(year, 6, 1));
+  const nextJan1 = new Date(Date.UTC(year + 1, 0, 1));
 
-  const summerOff = Math.max(janOff, julOff);
+  const offsetJan = getOffsetMinutes(iana, jan1);
+  const offsetJul = getOffsetMinutes(iana, jul1);
 
-  // Binary search for transition date between two months
-  function findTransition(startMonth, endMonth) {
-    let lo = new Date(year, startMonth, 1);
-    let hi = new Date(year, endMonth + 1, 0); // last day of endMonth
-    while ((hi - lo) > 86400000) { // within 1 day
-      const mid = new Date((lo.getTime() + hi.getTime()) / 2);
-      const midOff = getOffsetMinutes(iana, mid);
-      const loOff = getOffsetMinutes(iana, lo);
-      if (midOff !== loOff) {
-        hi = mid;
-      } else {
-        lo = mid;
-      }
-    }
-    // Return the day when the transition happens (hi side)
-    return hi;
-  }
+  if (offsetJan === offsetJul) return { hasDST: false };
 
-  let springTransition, fallTransition;
+  const transition1 = findTransitionExact(jan1.getTime(), jul1.getTime(), iana, offsetJan);
+  const transition2 = findTransitionExact(jul1.getTime(), nextJan1.getTime(), iana, offsetJul);
+  const isNorthern = offsetJan < offsetJul;
 
-  // Northern hemisphere: Jan offset < Jul offset → spring forward in Mar-Apr, fall back in Oct-Nov
-  // Southern hemisphere: Jan offset > Jul offset → spring forward in Sep-Oct, fall back in Mar-Apr
-  if (janOff < julOff) {
-    // Northern: DST starts spring, ends fall
-    springTransition = findTransition(1, 5);  // Feb–Jun
-    fallTransition = findTransition(7, 11);   // Aug–Dec
-  } else {
-    // Southern: DST starts fall (Oct-ish), ends spring (Mar-ish)
-    springTransition = findTransition(7, 11); // Aug–Dec (DST starts)
-    fallTransition = findTransition(1, 5);    // Feb–Jun (DST ends)
-  }
-
-  const fmt = (d) => {
-    const mo = (d.getMonth() + 1).toString().padStart(2, '0');
-    const day = d.getDate().toString().padStart(2, '0');
-    return `${mo}-${day}`;
+  return {
+    hasDST: true,
+    springTransition: isNorthern ? transition1 : transition2,
+    fallTransition: isNorthern ? transition2 : transition1,
+    standardOffset: Math.min(offsetJan, offsetJul),
+    dstOffset: Math.max(offsetJan, offsetJul),
   };
+}
 
-  return { dstStart: fmt(springTransition), dstEnd: fmt(fallTransition) };
+/**
+ * Binary-search the boundary in [startMs, endMs] where the offset changes
+ * away from `startOffset`. Returns the first instant on the new offset,
+ * resolved to ±1 minute.
+ */
+function findTransitionExact(startMs, endMs, iana, startOffset) {
+  let left = startMs;
+  let right = endMs;
+  while (right - left > 60000) {
+    const mid = Math.floor((left + right) / 2);
+    if (getOffsetMinutes(iana, new Date(mid)) === startOffset) left = mid;
+    else right = mid;
+  }
+  return new Date(right);
 }
 
 export function generateScriptsForTimezone(iana, isLocal, forceDST = false) {
@@ -97,17 +95,16 @@ export function generateScriptsForTimezone(iana, isLocal, forceDST = false) {
   const now = clocks.getOverrideTime() || new Date();
   const isUtc = iana === 'UTC';
 
-  const currentYear = now.getFullYear();
-  const jan = new Date(currentYear, 0, 1);
-  const jul = new Date(currentYear, 6, 1);
-
   const systemOffset = -360; // SFMC is fixed UTC-6
+  const currentYear = now.getFullYear();
 
-  const offWinter = getOffsetMinutes(iana, jan);
-  const offSummer = getOffsetMinutes(iana, jul);
+  // Render the transition timestamp as it appears in the *target* timezone —
+  // that's the wall-clock instant that AMPScript/SSJS will compare against.
+  const transition = getDSTTransitions(iana, currentYear);
+  const hasDST = transition.hasDST;
 
-  const offsetWinterHours = (offWinter - systemOffset) / 60;
-  const offsetSummerHours = (offSummer - systemOffset) / 60;
+  const standardOffsetHours = ((hasDST ? transition.standardOffset : getOffsetMinutes(iana, new Date(Date.UTC(currentYear, 0, 1)))) - systemOffset) / 60;
+  const dstOffsetHours = ((hasDST ? transition.dstOffset : getOffsetMinutes(iana, new Date(Date.UTC(currentYear, 6, 1)))) - systemOffset) / 60;
 
   // Timezone shortcut for alias
   let tzShort = 'TZ';
@@ -130,35 +127,56 @@ export function generateScriptsForTimezone(iana, isLocal, forceDST = false) {
   const sqlSnippet = `[DateColumn] AT TIME ZONE 'Central America Standard Time' AT TIME ZONE '${windowsName}' AS [DateColumn_${sanitizedTz}]`;
 
   let ampSnippet, ssjsSnippet;
-  const hasDST = offsetWinterHours !== offsetSummerHours;
-  const dstDates = hasDST ? findDSTTransitions(iana, currentYear) : null;
 
   if (isLocal) {
     ampSnippet = `%%[\n    VAR @date, @convertedDate\n    SET @date = [DateColumn]\n    SET @convertedDate = SystemDateToLocalDate(@date)\n]%%`;
     ssjsSnippet = `<script runat="server">\n    Platform.Load('Core', '1.1.1');\n    var date = Attribute.GetValue('DateColumn');\n    var convertedDate = Platform.Function.SystemDateToLocalDate(date);\n</script>`;
   } else if ((!hasDST && !forceDST) || isUtc) {
     // Simple fixed offset — no DST
-    const fixedOffset = offsetWinterHours;
+    const fixedOffset = standardOffsetHours;
     ampSnippet = `%%[\n    VAR @date, @convertedDate\n    SET @date = [DateColumn]\n    SET @convertedDate = DateAdd(@date, ${fixedOffset}, 'H')\n]%%`;
     ssjsSnippet = `<script runat="server">\n    Platform.Load('Core', '1.1.1');\n    var date = Attribute.GetValue('DateColumn');\n    var convertedDate = Platform.Function.DateAdd(date, ${fixedOffset}, 'H');\n</script>`;
   } else {
-    // DST-aware code — use real transition dates or defaults for forceDST
-    const dstStart = dstDates ? dstDates.dstStart : '03-30';
-    const dstEnd = dstDates ? dstDates.dstEnd : '10-26';
-    const summerOff = hasDST ? offsetSummerHours : offsetWinterHours + 1;
-    const winterOff = offsetWinterHours;
+    // DST-aware code with minute-precision boundaries.
+    // Northern: dstStart = spring (begin), dstEnd = fall (end), DST is between.
+    // Southern: spring is later in the year — DST wraps Jan, so we invert the comparison.
+    const isNorthern = transition.hasDST
+      ? transition.springTransition.getTime() < transition.fallTransition.getTime()
+      : true;
+
+    const dstStartMMDDHHMM = transition.hasDST
+      ? formatTransitionInTz(transition.springTransition, iana)
+      : { mmdd: '03-30', hhmm: '02:00' };
+    const dstEndMMDDHHMM = transition.hasDST
+      ? formatTransitionInTz(transition.fallTransition, iana)
+      : { mmdd: '10-26', hhmm: '02:00' };
+
+    const dstStart = `${dstStartMMDDHHMM.mmdd} ${dstStartMMDDHHMM.hhmm}`;
+    const dstEnd = `${dstEndMMDDHHMM.mmdd} ${dstEndMMDDHHMM.hhmm}`;
+    const summerOff = transition.hasDST ? dstOffsetHours : standardOffsetHours + 1;
+    const winterOff = standardOffsetHours;
+
+    // For Southern Hemisphere DST wraps the year boundary, so the IF
+    // becomes an OR (date >= springStart OR date <= fallEnd).
+    const ampDstCondition = isNorthern
+      ? 'IF @date >= @dstStart AND @date < @dstEnd THEN'
+      : 'IF @date >= @dstStart OR @date < @dstEnd THEN';
+
+    const ssjsDstCondition = isNorthern
+      ? '(date >= dstStart && date < dstEnd)'
+      : '(date >= dstStart || date < dstEnd)';
 
     ampSnippet = `%%[
     VAR @date, @dstStart, @dstEnd, @offset, @convertedDate
     SET @date = [DateColumn]
-    /* Verify -MM-DD dates match DST boundaries for your timezone */
+    /* Verify boundaries match your timezone (MM-DD HH:MM, target-zone wall time) */
     SET @dstStart = CONCAT(DatePart(@date, 'Y'), '-${dstStart}')
     SET @dstEnd = CONCAT(DatePart(@date, 'Y'), '-${dstEnd}')
 
-    IF @date >= @dstStart AND @date <= @dstEnd THEN
-        SET @offset = ${summerOff} /* Summer offset */
+    ${ampDstCondition}
+        SET @offset = ${summerOff} /* DST offset */
     ELSE
-        SET @offset = ${winterOff} /* Winter offset */
+        SET @offset = ${winterOff} /* Standard offset */
     ENDIF
 
     SET @convertedDate = DateAdd(@date, @offset, 'H')
@@ -169,15 +187,32 @@ export function generateScriptsForTimezone(iana, isLocal, forceDST = false) {
 
     var date = new Date(Attribute.GetValue('DateColumn'));
     var year = date.getFullYear();
-    // Verify -MM-DD dates match DST boundaries for your timezone
-    var dstStart = new Date(year + '-${dstStart}');
-    var dstEnd = new Date(year + '-${dstEnd}');
+    // Verify boundaries match your timezone (MM-DD HH:MM, target-zone wall time)
+    var dstStart = new Date(year + '-${dstStart.replace(' ', 'T')}');
+    var dstEnd = new Date(year + '-${dstEnd.replace(' ', 'T')}');
 
-    // Summer offset: ${summerOff}, Winter offset: ${winterOff}
-    var offset = (date >= dstStart && date <= dstEnd) ? ${summerOff} : ${winterOff};
+    // DST offset: ${summerOff}, Standard offset: ${winterOff}
+    var offset = ${ssjsDstCondition} ? ${summerOff} : ${winterOff};
     var convertedDate = Platform.Function.DateAdd(date, offset, 'H');
 </script>`;
   }
 
   return { sql: sqlSnippet, ampscript: ampSnippet, ssjs: ssjsSnippet, isLocal, hasDST, forceDST };
+}
+
+/**
+ * Format a transition Date as MM-DD and HH:MM in the *target* timezone's
+ * wall-clock — the value AMPScript/SSJS will see when reading the row.
+ */
+function formatTransitionInTz(date, iana) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: iana,
+    month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(date);
+  const get = (t) => parts.find(p => p.type === t)?.value || '00';
+  // Intl can render hour as "24" at midnight in some locales — normalize.
+  let hh = get('hour');
+  if (hh === '24') hh = '00';
+  return { mmdd: `${get('month')}-${get('day')}`, hhmm: `${hh}:${get('minute')}` };
 }

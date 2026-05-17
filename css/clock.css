@@ -22,7 +22,9 @@
   container-type: inline-size;
 }
 
-/* Controls row */
+/* Controls row. The visible icon is the single centered in-flow child;
+   the remove button is absolutely centered on the same spot and cross-
+   fades in on hover/focus (see below). */
 .clock-controls {
   display: flex;
   justify-content: center;
@@ -42,9 +44,17 @@
   width: 24px;
   height: 24px;
   color: var(--text-secondary);
+  transition: opacity var(--transition-fast);
 }
 
+/* Absolutely centered over the icon slot so (a) it never shifts the
+   centered icon off-axis, and (b) it occupies the same spot as the icon
+   for a clean swap. Hidden until hover/focus. */
 .remove-btn {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   background: none;
   border: none;
   color: var(--brand-red);
@@ -73,6 +83,15 @@
 .clock-card:hover .remove-btn,
 .clock-card:focus-within .remove-btn {
   opacity: 1;
+}
+
+/* On the local clock, the home icon and the remove button share the
+   centered slot. Fade the home icon out on hover/focus so it cleanly
+   morphs into the red X. The Salesforce/MCE cloud is intentionally NOT
+   targeted (that clock has no remove button — the cloud always shows). */
+.clock-card:hover .home-icon,
+.clock-card:focus-within .home-icon {
+  opacity: 0;
 }
 
 /* Clock container */
@@ -171,7 +190,10 @@
 .date-display {
   position: absolute;
   top: 50%;
-  right: 15%;
+  /* Anchor from the left so the badge always begins just right of the
+     center hub. A right:% anchor let the badge's floor width (min font +
+     "MMM DD") reach back over the center on small (160px) clocks. */
+  left: 56%;
   transform: translateY(-50%);
   font-weight: 700;
   font-size: 12px;
@@ -596,8 +618,14 @@
     padding: 0.25rem;
   }
 
-  .clock-face {
+  /* Cap the aspect-ratio owner so width AND height shrink together.
+     Capping .clock-face alone left its height tracking the (larger,
+     square) .clock-container — producing an egg in the 450–768px band. */
+  .clock-container {
     max-width: 160px;
+  }
+
+  .clock-face {
     border-width: 3px;
   }
 
@@ -660,5 +688,17 @@
   .clock-card__delete-overlay .clock-card__delete-btn {
     padding: 4px 12px;
     font-size: 0.65rem;
+  }
+}
+
+/* Phone widths: a 2-up grid squashes the cards (digital readouts collide).
+   Drop to a single column and let the clock use more of the width. */
+@media (max-width: 480px) {
+  #clock-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .clock-container {
+    max-width: 220px;
   }
 }

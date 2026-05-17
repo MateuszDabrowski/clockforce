@@ -1,8 +1,8 @@
 /* Save/Load — Browser slots, JSON export/import, URL sharing */
 /* Modals follow Diagramforce UX patterns */
 
-import * as clocks from './clocks.js?v=2.3.1';
-import { loadCustomNames, saveCustomName, loadBlockers, saveBlockers } from './persistence.js?v=2.3.1';
+import * as clocks from './clocks.js?v=2.4.0';
+import { loadCustomNames, saveCustomName, loadBlockers, saveBlockers, safeSetItem } from './persistence.js?v=2.4.0';
 
 const SAVE_SLOTS_KEY = 'clockforceSaves';
 
@@ -356,19 +356,38 @@ export function loadFromURL() {
     // Validate structure
     if (!compact || !Array.isArray(compact.c) || compact.c.length === 0) return false;
 
-    const validFormats = ['24h', '12h', 'mix'];
+    const validFormats = ['24h', '12h'];
     const validViews = ['analog', 'digital', 'timeline', 'clocks'];
+
+    // Migrate legacy 'mix' format → '24h'.
+    const rawFormat = validFormats.includes(compact.f) ? compact.f : '24h';
 
     const state = {
       clocks: compact.c
         .filter(c => c && typeof c.t === 'string' && c.t.length > 0 && c.t.length < 100)
         .map(c => ({ timezone: c.t, isLocal: !!c.l })),
-      timeFormat: validFormats.includes(compact.f) ? compact.f : '24h',
+      timeFormat: rawFormat,
       viewMode: validViews.includes(compact.v) ? compact.v : 'timeline',
       customNames: (compact.n && typeof compact.n === 'object' && !Array.isArray(compact.n)) ? compact.n : {},
-      blockers: Array.isArray(compact.b) ? compact.b.filter(b =>
-        b && typeof b.name === 'string' && typeof b.startFraction === 'number' && typeof b.endFraction === 'number'
-      ) : []
+      // v2.4.0 dropped legacy fraction-only blockers (broken for forward-looking
+      // coordination). Only accept absolute-timestamp blockers, with optional
+      // recurrence.daysOfWeek (validated as an array of integers 0..6).
+      blockers: Array.isArray(compact.b) ? compact.b
+        .filter(b =>
+          b && typeof b.name === 'string' &&
+          typeof b.startTime === 'number' && typeof b.endTime === 'number'
+        )
+        .map(b => {
+          const out = { name: b.name, startTime: b.startTime, endTime: b.endTime };
+          const days = b.recurrence?.daysOfWeek;
+          if (Array.isArray(days)) {
+            const cleaned = [...new Set(days.filter(d =>
+              Number.isInteger(d) && d >= 0 && d <= 6
+            ))].sort((a, b) => a - b);
+            if (cleaned.length > 0) out.recurrence = { daysOfWeek: cleaned };
+          }
+          return out;
+        }) : []
     };
 
     if (state.clocks.length === 0) return false;
@@ -381,13 +400,21 @@ export function loadFromURL() {
       }
     }
 
-    localStorage.setItem('clocks', JSON.stringify(state.clocks));
-    localStorage.setItem('timeFormat', state.timeFormat);
-    localStorage.setItem('viewMode', state.viewMode);
-    localStorage.setItem('customTzNames', JSON.stringify(state.customNames));
-    if (state.blockers.length > 0) saveBlockers(state.blockers);
+    // Race fix: only clear ?cfg= once every write succeeds. If quota fails
+    // partway through, leave the URL intact so a refresh can retry.
+    const writes = [
+      safeSetItem('clocks', state.clocks),
+      safeSetItem('timeFormat', state.timeFormat),
+      safeSetItem('viewMode', state.viewMode),
+      safeSetItem('customTzNames', state.customNames),
+    ];
+    if (state.blockers.length > 0) {
+      writes.push(safeSetItem('clockforceBlockers', state.blockers));
+    }
 
-    history.replaceState(null, '', location.pathname);
+    if (writes.every(Boolean)) {
+      history.replaceState(null, '', location.pathname);
+    }
     return true;
   } catch {
     return false;

@@ -838,6 +838,19 @@
   cursor: grabbing;
 }
 
+/* Recurring blocks get a subtle diagonal pattern overlay — distinguishes
+ * each weekly/daily occurrence from a one-off block at a glance. */
+.md-tl__blocker--recurring {
+  background-image:
+    linear-gradient(
+      45deg,
+      transparent 0,
+      transparent 4px,
+      color-mix(in srgb, var(--brand-blue) 22%, transparent) 4px,
+      color-mix(in srgb, var(--brand-blue) 22%, transparent) 6px
+    );
+}
+
 .md-tl__blocker-name {
   font-size: 10px;
   font-weight: 700;

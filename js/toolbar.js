@@ -1,12 +1,12 @@
 /* Toolbar — dropdown menus, hamburger menu, button wiring */
 
-import * as clocks from './clocks.js?v=2.3.1';
-import * as sidebarTz from './sidebar-tz.js?v=2.3.1';
-import * as sidebarScripts from './sidebar-scripts.js?v=2.3.1';
-import * as mce from './mce.js?v=2.3.1';
-import * as timeline from './timeline.js?v=2.3.1';
-import * as saveload from './saveload.js?v=2.3.1';
-import { getOffsetString, timezoneDatabase, getTzByIana } from './timezones.js?v=2.3.1';
+import * as clocks from './clocks.js?v=2.4.0';
+import * as sidebarTz from './sidebar-tz.js?v=2.4.0';
+import * as sidebarScripts from './sidebar-scripts.js?v=2.4.0';
+import * as mce from './mce.js?v=2.4.0';
+import * as timeline from './timeline.js?v=2.4.0';
+import * as saveload from './saveload.js?v=2.4.0';
+import { getOffsetString, timezoneDatabase, getTzByIana } from './timezones.js?v=2.4.0';
 
 let toastFn = null;
 let _setViewFn = null;
@@ -33,7 +33,7 @@ export function init() {
   // View mode segmented control
   setupViewToggle();
 
-  // Time format toggle (24h / 12h / Mix)
+  // Time format toggle (24h / 12h)
   setupFormatToggle();
 
   // Center datetime controls
@@ -118,7 +118,6 @@ function setupFormatToggle() {
   const btns = {
     '24h': document.getElementById('btn-fmt-24h'),
     '12h': document.getElementById('btn-fmt-12h'),
-    'mix': document.getElementById('btn-fmt-mix')
   };
 
   function setFormat(fmt) {
@@ -135,7 +134,6 @@ function setupFormatToggle() {
 
   if (btns['24h']) btns['24h'].addEventListener('click', () => setFormat('24h'));
   if (btns['12h']) btns['12h'].addEventListener('click', () => setFormat('12h'));
-  if (btns['mix']) btns['mix'].addEventListener('click', () => setFormat('mix'));
 
   // Restore saved format
   const saved = clocks.getTimeFormat();
@@ -566,7 +564,6 @@ function setupHamburger() {
       case 'share-url': saveload.shareURL(toastFn); break;
       case 'fmt-24h': clocks.setTimeFormat('24h'); updateDatetimeInputs(); timeline.render(); break;
       case 'fmt-12h': clocks.setTimeFormat('12h'); updateDatetimeInputs(); timeline.render(); break;
-      case 'fmt-mix': clocks.setTimeFormat('mix'); updateDatetimeInputs(); timeline.render(); break;
       case 'toggle-tz': sidebarTz.toggle(); document.getElementById('tz-navbar-search')?.focus(); break;
       case 'toggle-scripts': sidebarScripts.toggle(); break;
       case 'theme': document.getElementById('btn-theme')?.click(); break;

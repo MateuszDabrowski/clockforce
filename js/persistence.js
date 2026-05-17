@@ -5,14 +5,16 @@ const CUSTOM_NAMES_KEY = 'customTzNames';
 const BLOCKERS_KEY = 'clockforceBlockers';
 
 /**
- * Safely write to localStorage, catching quota errors.
+ * Safely write to localStorage, catching quota errors. Strings are stored
+ * verbatim; everything else is JSON-stringified.
  * @param {string} key
- * @param {*} value — will be JSON-stringified
+ * @param {*} value
  * @returns {boolean} true on success
  */
-function safeSetItem(key, value) {
+export function safeSetItem(key, value) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const serialized = typeof value === 'string' ? value : JSON.stringify(value);
+    localStorage.setItem(key, serialized);
     return true;
   } catch {
     console.warn(`localStorage write failed for key "${key}" (quota exceeded or storage unavailable)`);
@@ -49,14 +51,10 @@ export function loadClocks() {
   }
   list = Array.from(seen.values());
 
-  // Ensure local clock always present
-  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!list.some(c => c.isLocal)) {
-    list.unshift({ timezone: localTz, isLocal: true });
-  }
-
-  // Default fallback
+  // First-run default. Once the user has any clocks, we trust their list —
+  // they may have removed the local row deliberately for a focused view.
   if (list.length === 0) {
+    const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     list = [
       { timezone: localTz, isLocal: true },
       { timezone: 'Etc/GMT+6', isLocal: false }

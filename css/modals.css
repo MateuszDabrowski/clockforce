@@ -517,3 +517,68 @@
     padding: 8px 10px;
   }
 }
+
+/* ---- v2.4.0: Time Block edit modal (name + recurrence days) ---- */
+
+.md-blocker-modal__label {
+  display: block;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.md-blocker-modal__name {
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  background: var(--bg-surface);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+}
+
+.md-blocker-modal__name:focus {
+  outline: none;
+  border-color: var(--brand-blue);
+  box-shadow: 0 0 0 2px rgba(29, 115, 201, 0.18);
+}
+
+.md-blocker-modal__days {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 6px;
+  margin-bottom: var(--spacing-xs);
+}
+
+.md-blocker-modal__day {
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-sm);
+  padding: 8px 0;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.md-blocker-modal__day:hover {
+  border-color: var(--brand-blue);
+  color: var(--text-primary);
+}
+
+.md-blocker-modal__day--active {
+  background: var(--brand-blue);
+  border-color: var(--brand-blue);
+  color: #fff;
+}
+
+.md-blocker-modal__hint {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--font-size-xs);
+  line-height: 1.4;
+}

@@ -1,29 +1,16 @@
 /* Clock rendering, animation, and state management */
 
-import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.3.1';
-import { saveClocks, loadClocks, getCustomName, saveCustomName } from './persistence.js?v=2.3.1';
+import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.4.0';
+import { saveClocks, loadClocks, getCustomName, saveCustomName } from './persistence.js?v=2.4.0';
 
 // State
 let clocks = [];
 let overrideTime = null;
 let probeSource = null;
 let animFrameId = null;
-let timeFormat = '24h'; // '24h' | '12h' | 'mix'
-
-// Timezones that conventionally use 12-hour format
-const tz12h = new Set([
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles',
-  'America/Phoenix', 'America/Anchorage', 'Pacific/Honolulu', 'America/Halifax',
-  'America/St_Johns', 'America/Regina', 'America/Bogota',
-  'Europe/London', 'Europe/Dublin',
-  'Asia/Kolkata', 'Asia/Dhaka', 'Asia/Karachi',
-  'Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane',
-  'Australia/Perth', 'Australia/Adelaide', 'Australia/Darwin',
-  'Pacific/Auckland', 'Pacific/Fiji',
-  'Asia/Manila', 'America/Sao_Paulo',
-  'America/Argentina/Buenos_Aires',
-  'Africa/Cairo', 'Asia/Riyadh', 'Asia/Dubai',
-]);
+// v2.4.0: 'mix' was removed. Time format is now strictly '24h' | '12h' so
+// shared configurations render identically for every recipient.
+let timeFormat = '24h';
 
 // Callbacks
 let onClocksChanged = null;
@@ -35,24 +22,24 @@ export function init({ onClocksChange, toast, onClockClick }) {
   onToast = toast;
   onClockClicked = onClockClick || null;
   clocks = loadClocks();
-  timeFormat = localStorage.getItem('timeFormat') || 'mix';
+  // 'mix' was removed in v2.4.0; migrate any stale value to '24h'.
+  const storedFormat = localStorage.getItem('timeFormat');
+  timeFormat = (storedFormat === '12h' || storedFormat === '24h') ? storedFormat : '24h';
+  if (storedFormat !== timeFormat) localStorage.setItem('timeFormat', timeFormat);
 
-  // Ensure local and Salesforce/MCE clocks always exist
-  ensureDefaultClocks();
+  ensureFallbackClock();
 
   renderClocks();
   requestAnimationFrame(tick);
 }
 
-function ensureDefaultClocks() {
-  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  if (!clocks.some(c => c.isLocal)) {
-    clocks.unshift({ timezone: localTz, isLocal: true });
+// If the user has removed every clock (only possible after the v2.4.0
+// unpinning of `isLocal`), drop in a UTC clock so the UI is never empty.
+function ensureFallbackClock() {
+  if (clocks.length === 0) {
+    clocks.push({ timezone: 'UTC', isLocal: false });
+    saveClocks(clocks);
   }
-  if (!clocks.some(c => c.timezone === 'Etc/GMT+6')) {
-    clocks.push({ timezone: 'Etc/GMT+6', isLocal: false });
-  }
-  saveClocks(clocks);
 }
 
 export function getClocks() { return clocks; }
@@ -60,15 +47,12 @@ export function getOverrideTime() { return overrideTime; }
 export function isOverrideActive() { return overrideTime !== null; }
 export function getTimeFormat() { return timeFormat; }
 export function getUse24h() { return timeFormat === '24h'; }
-export function getUse24hForTz(tz) {
-  if (timeFormat === '24h') return true;
-  if (timeFormat === '12h') return false;
-  // mix: use 12h for countries that conventionally use it
-  return !tz12h.has(tz);
-}
-
+// Kept as a thin alias so callers can still ask "use 24h here?" — every zone
+// returns the same answer now, but the call-site phrasing is clearer.
+export function getUse24hForTz(_tz) { return timeFormat === '24h'; }
 
 export function setTimeFormat(fmt) {
+  if (fmt !== '24h' && fmt !== '12h') fmt = '24h';
   timeFormat = fmt;
   localStorage.setItem('timeFormat', fmt);
   renderClocks();
@@ -85,6 +69,7 @@ export function addClock(timezone) {
 
 export function removeClock(index) {
   clocks.splice(index, 1);
+  ensureFallbackClock();
   saveClocks(clocks);
   renderClocks();
   if (onClocksChanged) onClocksChanged();
@@ -139,6 +124,8 @@ function renderClocks() {
   const clockTemplate = document.getElementById('clock-template');
   if (!clockGrid || !clockTemplate) return;
 
+  // Force the throttled tick() to repaint on its next frame.
+  lastTickSecond = -1;
   clockGrid.replaceChildren();
   const ref = overrideTime || new Date();
   clocks.sort((a, b) => getOffsetMinutes(a.timezone, ref) - getOffsetMinutes(b.timezone, ref));
@@ -165,12 +152,14 @@ function renderClocks() {
     card.dataset.timezone = clockData.timezone;
     card.dataset.index = index;
 
-    // Controls
+    // Controls. v2.4.0: the local-tz row is removable like any other; only
+    // the Salesforce/MCE row stays pinned (it's the canonical reference for
+    // the script-generation use case).
     const isSalesforce = clockData.timezone === 'Etc/GMT+6';
     if (clockData.isLocal) {
       homeIcon.style.display = 'block';
       salesforceIcon.style.display = 'none';
-      removeBtn.style.display = 'none';
+      removeBtn.style.display = 'flex';
     } else if (isSalesforce) {
       homeIcon.style.display = 'none';
       salesforceIcon.style.display = 'block';
@@ -179,15 +168,15 @@ function renderClocks() {
       homeIcon.style.display = 'none';
       salesforceIcon.style.display = 'none';
       removeBtn.style.display = 'flex';
+    }
 
+    if (!isSalesforce) {
       removeBtn.addEventListener('click', () => {
         deleteOverlay.classList.remove('hidden');
       });
-
       cancelBtn.addEventListener('click', () => {
         deleteOverlay.classList.add('hidden');
       });
-
       confirmBtn.addEventListener('click', () => {
         removeClock(index);
       });
@@ -351,20 +340,30 @@ function updateSingleClock(timezone, hourHand, minuteHand, secondHand, dateDispl
   }
 }
 
+// Last wall-clock second the DOM was updated for. Skipping frames that hit
+// the same second keeps background tabs near-idle without losing the analog
+// seconds-hand cadence.
+let lastTickSecond = -1;
+
 function tick() {
   const ref = overrideTime || new Date();
-  const cards = document.querySelectorAll('.clock-card');
-  cards.forEach(card => {
-    const tz = card.dataset.timezone;
-    const hourHand = card.querySelector('.hour-hand');
-    const minuteHand = card.querySelector('.minute-hand');
-    const secondHand = card.querySelector('.second-hand');
-    const dateDisplay = card.querySelector('.date-display');
-    const timezoneDisplay = card.querySelector('.timezone-display');
-    const analogFace = card.querySelector('.analog-face');
-    const digitalReadout = card.querySelector('.digital-readout');
-    if (tz) updateSingleClock(tz, hourHand, minuteHand, secondHand, dateDisplay, timezoneDisplay, analogFace, digitalReadout, ref);
-  });
+  const currentSecond = Math.floor(ref.getTime() / 1000);
+
+  if (currentSecond !== lastTickSecond) {
+    lastTickSecond = currentSecond;
+    const cards = document.querySelectorAll('.clock-card');
+    cards.forEach(card => {
+      const tz = card.dataset.timezone;
+      const hourHand = card.querySelector('.hour-hand');
+      const minuteHand = card.querySelector('.minute-hand');
+      const secondHand = card.querySelector('.second-hand');
+      const dateDisplay = card.querySelector('.date-display');
+      const timezoneDisplay = card.querySelector('.timezone-display');
+      const analogFace = card.querySelector('.analog-face');
+      const digitalReadout = card.querySelector('.digital-readout');
+      if (tz) updateSingleClock(tz, hourHand, minuteHand, secondHand, dateDisplay, timezoneDisplay, analogFace, digitalReadout, ref);
+    });
+  }
 
   if (!overrideTime) {
     animFrameId = requestAnimationFrame(tick);

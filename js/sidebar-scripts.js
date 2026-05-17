@@ -1,10 +1,10 @@
 /* Left sidebar — Code snippets panel */
 
-import * as mce from './mce.js?v=2.3.1';
-import * as clocks from './clocks.js?v=2.3.1';
-import { getOffsetString } from './timezones.js?v=2.3.1';
-import { highlightSQL, highlightAMPScript, highlightSSJS } from './syntax.js?v=2.3.1';
-import { setupDragHandle } from './drag-handle.js?v=2.3.1';
+import * as mce from './mce.js?v=2.4.0';
+import * as clocks from './clocks.js?v=2.4.0';
+import { getOffsetString, isOffsetStale } from './timezones.js?v=2.4.0';
+import { highlightSQL, highlightAMPScript, highlightSSJS } from './syntax.js?v=2.4.0';
+import { setupDragHandle } from './drag-handle.js?v=2.4.0';
 
 let currentScripts = null;
 let currentIsLocal = false;
@@ -77,6 +77,13 @@ export function showForTimezone(iana, isLocal, forceDST = false) {
   document.getElementById('sql-text').innerHTML = highlightSQL(scripts.sql);
   document.getElementById('ampscript-text').innerHTML = highlightAMPScript(scripts.ampscript);
   document.getElementById('ssjs-text').innerHTML = highlightSSJS(scripts.ssjs);
+
+  // Stale-IANA notice — runtime offsets diverge from the baked-in snapshot.
+  // Sits above the snippet sections so practitioners see it before copying.
+  const staleNotice = document.getElementById('stale-iana-notice');
+  if (staleNotice) {
+    staleNotice.classList.toggle('hidden', !isOffsetStale(iana));
+  }
 
   // Local notice
   const localNotice = document.getElementById('local-tz-notice');

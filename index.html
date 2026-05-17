@@ -23,17 +23,17 @@
   <meta name="twitter:image" content="https://clockforce.mateuszdabrowski.pl/og-image.png">
 
   <title>Clockforce</title>
-  <link rel="icon" type="image/png" href="favicon.png?v=2.3.1">
+  <link rel="icon" type="image/png" href="favicon.png?v=2.4.0">
 
   <!-- App CSS (order matters) -->
-  <link rel="stylesheet" href="css/variables.css?v=2.3.1">
-  <link rel="stylesheet" href="css/theme.css?v=2.3.1">
-  <link rel="stylesheet" href="css/layout.css?v=2.3.1">
-  <link rel="stylesheet" href="css/toolbar.css?v=2.3.1">
-  <link rel="stylesheet" href="css/sidebar.css?v=2.3.1">
-  <link rel="stylesheet" href="css/clock.css?v=2.3.1">
-  <link rel="stylesheet" href="css/timeline.css?v=2.3.1">
-  <link rel="stylesheet" href="css/modals.css?v=2.3.1">
+  <link rel="stylesheet" href="css/variables.css?v=2.4.0">
+  <link rel="stylesheet" href="css/theme.css?v=2.4.0">
+  <link rel="stylesheet" href="css/layout.css?v=2.4.0">
+  <link rel="stylesheet" href="css/toolbar.css?v=2.4.0">
+  <link rel="stylesheet" href="css/sidebar.css?v=2.4.0">
+  <link rel="stylesheet" href="css/clock.css?v=2.4.0">
+  <link rel="stylesheet" href="css/timeline.css?v=2.4.0">
+  <link rel="stylesheet" href="css/modals.css?v=2.4.0">
 </head>
 
 <body>
@@ -129,7 +129,6 @@
         <div class="md-toolbar__view-toggle" role="radiogroup" aria-label="Time format">
           <button id="btn-fmt-12h" class="md-toolbar__view-btn" role="radio" aria-checked="false" title="12-hour format">12h</button>
           <button id="btn-fmt-24h" class="md-toolbar__view-btn" role="radio" aria-checked="false" title="24-hour format">24h</button>
-          <button id="btn-fmt-mix" class="md-toolbar__view-btn" role="radio" aria-checked="false" title="Local format per timezone">Mix</button>
         </div>
 
         <button id="btn-share-icon" class="md-toolbar__button md-toolbar__button--icon-only" title="Share as URL" aria-label="Share as URL">
@@ -196,7 +195,6 @@
           <div class="md-toolbar__menu-separator" role="separator"></div>
           <button class="md-toolbar__menu-item" role="menuitem" data-action="fmt-12h">12h Format</button>
           <button class="md-toolbar__menu-item" role="menuitem" data-action="fmt-24h">24h Format</button>
-          <button class="md-toolbar__menu-item" role="menuitem" data-action="fmt-mix">Mix Format</button>
           <div class="md-toolbar__menu-separator" role="separator"></div>
           <button class="md-toolbar__menu-item" role="menuitem" data-action="theme">
             <svg class="md-toolbar__menu-icon md-toolbar__icon--theme" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="20" height="20">
@@ -228,6 +226,11 @@
           </button>
         </div>
         <div class="md-scripts__body">
+          <!-- Stale IANA notice — runtime offsets disagree with baked-in snapshot -->
+          <div id="stale-iana-notice" class="md-scripts__notice md-scripts__notice--warning hidden">
+            <strong>Warning:</strong> Your browser's timezone definitions differ from the current IANA database for this region. The generated scripts below may use outdated offsets.
+          </div>
+
           <!-- Local TZ notice -->
           <div id="local-tz-notice" class="md-scripts__notice hidden">
             <strong>SystemDateToLocalDate</strong> only works if this timezone is set as the local time for the current MCE user.
@@ -424,12 +427,12 @@
         </div>
         <p class="md-about__tagline">Meeting time finder, timezone comparison & MCE date conversion tool</p>
         <div class="md-about__info">
-          <p>Find the best meeting times across timezones with the interactive timeline view. Drag to select time ranges, save Time Blocks and click them to preview across all timezones. Compare sunrise/sunset across locations. Switch between Timeline and Clocks views with 12h/24h/Mix time format support.</p>
+          <p>Find the best meeting times across timezones with the interactive timeline view. Drag to select time ranges, save Time Blocks (one-off or recurring) and click them to preview across all timezones. Compare sunrise/sunset across locations. Switch between Timeline and Clocks views with strict 12h/24h time format support.</p>
           <p>Use the floating datetime picker to lock all clocks to any point in time in any timezone. Generate production-ready date conversion scripts for <a href="https://www.salesforce.com/products/marketing-cloud/" target="_blank" rel="noopener">Salesforce Marketing Cloud Engagement</a> in SQL, AMPScript, and SSJS with DST-aware logic.</p>
           <p>Save and load configurations, share via URL, and export/import as JSON. Built with vanilla JavaScript and the <a href="https://www.lightningdesignsystem.com/" target="_blank" rel="noopener">Salesforce Lightning Design System</a>.</p>
         </div>
         <div class="md-about__meta">
-          <span class="md-about__version">v2.3.1</span>
+          <span class="md-about__version">v2.4.0</span>
           <span class="md-about__separator">&middot;</span>
           <a href="https://mateuszdabrowski.pl" target="_blank" rel="noopener" class="md-about__link">mateuszdabrowski.pl</a>
           <span class="md-about__separator">&middot;</span>
@@ -464,7 +467,7 @@
   <input type="file" id="json-import-input" accept=".json" class="hidden" aria-hidden="true">
 
   <!-- App script as ES module -->
-  <script type="module" src="js/app.js?v=2.3.1"></script>
+  <script type="module" src="js/app.js?v=2.4.0"></script>
 </body>
 
 </html>

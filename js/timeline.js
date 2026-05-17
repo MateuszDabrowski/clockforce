@@ -1,9 +1,9 @@
 /* Timeline display — horizontal timezone comparison with draggable time indicator */
 
-import * as clocks from './clocks.js?v=2.3.1';
-import { updateDatetimeInputs, updateResetVisibility, getPickerTz, setPickerTz } from './toolbar.js?v=2.3.1';
-import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.3.1';
-import { getCustomName, saveCustomName, loadBlockers, saveBlockers, addBlocker, removeBlocker } from './persistence.js?v=2.3.1';
+import * as clocks from './clocks.js?v=2.4.0';
+import { updateDatetimeInputs, updateResetVisibility, getPickerTz, setPickerTz } from './toolbar.js?v=2.4.0';
+import { timezoneDatabase, getTzByIana, getOffsetMinutes, getOffsetString, getTimezoneShortCode } from './timezones.js?v=2.4.0';
+import { getCustomName, saveCustomName, loadBlockers, saveBlockers, addBlocker, removeBlocker } from './persistence.js?v=2.4.0';
 
 const LOOKBACK_HOURS = 24; // 1 day of scrollable past
 const TOTAL_HOURS = LOOKBACK_HOURS + 7 * 24; // 1 day back + 7 days forward = 192
@@ -43,33 +43,33 @@ function fractionToTimestamp(fraction, windowStart = getWindowStart()) {
 }
 
 /**
- * Loads blockers, migrates legacy fraction-only blockers to absolute timestamps
- * (anchored to today's midnight at migration time), and drops blockers whose
- * end is before the current window start. Saves any changes back.
+ * Loads blockers and drops only those that have ended in the past (relative
+ * to the wall-clock now). Future blockers are retained even if they fall
+ * outside the current 192h render window — that's required for shared
+ * links proposing meetings further than 7 days out. Recurring blockers
+ * (with `recurrence`) are always retained: the master timestamp is a
+ * template, not a horizon.
+ *
+ * v2.3.1's legacy `{ startFraction, endFraction }` blockers are dropped
+ * silently (the fraction-only schema was anchored to the load-day midnight
+ * and was unreliable for forward-looking coordination).
  */
 function normalizeBlockers() {
   const raw = loadBlockers();
-  const windowStart = getWindowStart();
+  const nowMs = Date.now();
   let changed = false;
   const out = [];
 
-  for (const b of raw) {
-    let blocker = b;
-    // One-time migration: legacy { startFraction, endFraction } → { startTime, endTime }
-    if (blocker && blocker.startTime === undefined && blocker.startFraction !== undefined) {
-      blocker = {
-        name: blocker.name,
-        startTime: windowStart + blocker.startFraction * WINDOW_MS,
-        endTime: windowStart + blocker.endFraction * WINDOW_MS,
-      };
-      changed = true;
-    }
+  for (const blocker of raw) {
     if (!blocker || typeof blocker.startTime !== 'number' || typeof blocker.endTime !== 'number') {
       changed = true;
       continue;
     }
-    // Drop blockers entirely in the past (endTime at or before window start)
-    if (blocker.endTime <= windowStart) {
+    // Recurring blockers don't expire — the start/end define the time-of-day
+    // and duration, not a single calendar slot.
+    const isRecurring = blocker.recurrence && Array.isArray(blocker.recurrence.daysOfWeek)
+      && blocker.recurrence.daysOfWeek.length > 0;
+    if (!isRecurring && blocker.endTime <= nowMs) {
       changed = true;
       continue;
     }
@@ -78,6 +78,187 @@ function normalizeBlockers() {
 
   if (changed) saveBlockers(out);
   return out;
+}
+
+/* ---------------------------------------------------------------------------
+ *  Recurrence (v2.4.0)
+ *
+ *  A blocker becomes recurring when it has `recurrence.daysOfWeek` (number[]
+ *  using 0=Sun..6=Sat in the user's local timezone). The master's
+ *  `startTime`/`endTime` then act as a *template*: they define the time-of-day
+ *  in local-tz wall clock and the duration. We expand the template into one
+ *  instance per matching weekday inside the 192h window.
+ *
+ *  Drag / resize / delete on any instance applies to the master — the
+ *  intent is "reschedule the whole series", which matches how teams use
+ *  standing meetings.
+ * ------------------------------------------------------------------------- */
+
+function isRecurringBlocker(b) {
+  return !!(b && b.recurrence && Array.isArray(b.recurrence.daysOfWeek)
+    && b.recurrence.daysOfWeek.length > 0);
+}
+
+/**
+ * Local-tz midnight at-or-before a given epoch ms. DST transitions are
+ * absorbed by Intl: we reformat the instant to local-tz Y/M/D and rebuild
+ * midnight as an absolute UTC ms using the offset *at that instant*.
+ */
+function localMidnightAtOrBefore(epoch, localTz) {
+  const ref = new Date(epoch);
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: localTz, year: 'numeric', month: 'numeric', day: 'numeric'
+  }).formatToParts(ref);
+  const y = parseInt(parts.find(p => p.type === 'year').value, 10);
+  const mo = parseInt(parts.find(p => p.type === 'month').value, 10) - 1;
+  const d = parseInt(parts.find(p => p.type === 'day').value, 10);
+  const localOffset = getOffsetMinutes(localTz, ref);
+  return Date.UTC(y, mo, d, 0, 0) - localOffset * 60000;
+}
+
+/**
+ * Expand a blocker into one or more rendered instances within the window.
+ * Non-recurring blockers expand to a single passthrough instance.
+ */
+function expandBlockerInstances(blocker, idx, windowStart, windowMs) {
+  if (!isRecurringBlocker(blocker)) {
+    return [{
+      idx, isMaster: true, name: blocker.name,
+      startTime: blocker.startTime, endTime: blocker.endTime,
+    }];
+  }
+
+  const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const days = new Set(blocker.recurrence.daysOfWeek);
+  const duration = blocker.endTime - blocker.startTime;
+  if (duration <= 0) return [];
+
+  // Decompose template start: local-tz time-of-day in milliseconds-since-midnight.
+  const tplParts = new Intl.DateTimeFormat('en-US', {
+    timeZone: localTz, hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+  }).formatToParts(new Date(blocker.startTime));
+  const get = (t) => parseInt(tplParts.find(p => p.type === t)?.value || '0', 10);
+  let tplH = get('hour');
+  if (tplH === 24) tplH = 0; // Intl quirk at exact midnight in some locales
+  const timeOfDayMs = ((tplH * 60 + get('minute')) * 60 + get('second')) * 1000;
+
+  const dowMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const out = [];
+  const windowEnd = windowStart + windowMs;
+  let dayMidnight = localMidnightAtOrBefore(windowStart, localTz);
+
+  // Window is ~8 days. Cap at 12 iterations as a defensive bound against
+  // pathological DST/calendar edge cases.
+  for (let i = 0; i < 12 && dayMidnight < windowEnd; i++) {
+    const dowParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: localTz, weekday: 'short'
+    }).formatToParts(new Date(dayMidnight));
+    const dow = dowMap[dowParts.find(p => p.type === 'weekday')?.value];
+
+    if (days.has(dow)) {
+      const instStart = dayMidnight + timeOfDayMs;
+      const instEnd = instStart + duration;
+      if (instEnd > windowStart && instStart < windowEnd) {
+        out.push({
+          idx, isMaster: false, name: blocker.name,
+          startTime: instStart, endTime: instEnd,
+        });
+      }
+    }
+
+    // Advance one local day. +2h slack absorbs spring-forward (23h day) and
+    // fall-back (25h day) without skipping or double-counting; localMidnight
+    // re-snaps to the canonical midnight.
+    dayMidnight = localMidnightAtOrBefore(dayMidnight + 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000, localTz);
+  }
+  return out;
+}
+
+/**
+ * Modal for creating / editing a Time Block. Replaces the v2.3.1 native
+ * prompt() flow so we can capture day-of-week recurrence in one dialog.
+ *
+ * onSave receives `{ name, daysOfWeek }`. Empty daysOfWeek means a one-off
+ * block (no recurrence).
+ */
+function showBlockerModal({ name = 'Available', daysOfWeek = [], title = 'Time Block' }, onSave) {
+  document.querySelector('.md-blocker-modal')?.remove();
+
+  const wrapper = document.createElement('div');
+  wrapper.className = 'md-blocker-modal md-modal';
+  wrapper.setAttribute('role', 'dialog');
+  wrapper.setAttribute('aria-modal', 'true');
+
+  const labels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
+  const fullNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+  wrapper.innerHTML = `
+    <div class="md-modal__overlay"></div>
+    <div class="md-modal__dialog" style="width:380px">
+      <div class="md-modal__header">
+        <h2 class="md-modal__title">${title}</h2>
+        <button class="md-toolbar__button md-blocker-modal__close-x" aria-label="Close">
+          <svg class="md-toolbar__icon" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" fill="none"/></svg>
+        </button>
+      </div>
+      <div class="md-modal__body" style="padding:var(--spacing-md) var(--spacing-lg)">
+        <label class="md-blocker-modal__label">Name</label>
+        <input type="text" class="md-blocker-modal__name" spellcheck="false" style="width:100%;padding:8px 10px;margin-bottom:var(--spacing-md)">
+        <label class="md-blocker-modal__label">Repeat on</label>
+        <div class="md-blocker-modal__days" role="group" aria-label="Days of week">
+          ${labels.map((l, i) => `<button type="button" class="md-blocker-modal__day" data-day="${i}" aria-label="${fullNames[i]}" aria-pressed="false">${l}</button>`).join('')}
+        </div>
+        <p class="md-blocker-modal__hint">Leave empty for a one-off block.</p>
+      </div>
+      <div class="md-modal__footer">
+        <button class="md-modal__btn md-modal__btn--secondary md-blocker-modal__cancel">Cancel</button>
+        <button class="md-modal__btn md-modal__btn--primary md-blocker-modal__save">Save</button>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(wrapper);
+
+  const nameInput = wrapper.querySelector('.md-blocker-modal__name');
+  nameInput.value = name;
+  setTimeout(() => { nameInput.focus(); nameInput.select(); }, 50);
+
+  const selected = new Set(daysOfWeek);
+  wrapper.querySelectorAll('.md-blocker-modal__day').forEach(btn => {
+    const d = parseInt(btn.dataset.day, 10);
+    if (selected.has(d)) {
+      btn.classList.add('md-blocker-modal__day--active');
+      btn.setAttribute('aria-pressed', 'true');
+    }
+    btn.addEventListener('click', () => {
+      if (selected.has(d)) {
+        selected.delete(d);
+        btn.classList.remove('md-blocker-modal__day--active');
+        btn.setAttribute('aria-pressed', 'false');
+      } else {
+        selected.add(d);
+        btn.classList.add('md-blocker-modal__day--active');
+        btn.setAttribute('aria-pressed', 'true');
+      }
+    });
+  });
+
+  const ac = new AbortController();
+  const close = () => { wrapper.remove(); ac.abort(); };
+  const doSave = () => {
+    const trimmed = nameInput.value.trim();
+    if (!trimmed) { nameInput.focus(); return; }
+    const days = Array.from(selected).sort((a, b) => a - b);
+    onSave({ name: trimmed, daysOfWeek: days });
+    close();
+  };
+
+  wrapper.querySelector('.md-modal__overlay').addEventListener('click', close, { signal: ac.signal });
+  wrapper.querySelector('.md-blocker-modal__close-x').addEventListener('click', close, { signal: ac.signal });
+  wrapper.querySelector('.md-blocker-modal__cancel').addEventListener('click', close, { signal: ac.signal });
+  wrapper.querySelector('.md-blocker-modal__save').addEventListener('click', doSave, { signal: ac.signal });
+  nameInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSave(); }, { signal: ac.signal });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); }, { signal: ac.signal });
 }
 
 function getBlockerRowPosition() {
@@ -521,19 +702,22 @@ export function render() {
     quickAddBtn.addEventListener('mousedown', (e) => { e.stopPropagation(); e.preventDefault(); });
     quickAddBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const name = prompt('Time Block name:', 'Available');
-      if (!name) return;
-      // Start at nearest hour, 1-hour duration
+      // Default to nearest hour, 1-hour duration. Modal lets the user pick
+      // recurrence days before persisting.
       const nowFraction = getCurrentFraction(clocks.getOverrideTime() || new Date());
       const nearestHour = Math.round(nowFraction * TOTAL_HOURS) / TOTAL_HOURS;
       const oneHour = 1 / TOTAL_HOURS;
       const startF = Math.min(nearestHour, 1 - oneHour);
-      addBlocker({
-        name,
-        startTime: fractionToTimestamp(startF),
-        endTime: fractionToTimestamp(startF + oneHour),
+      showBlockerModal({ title: 'New Time Block' }, ({ name, daysOfWeek }) => {
+        const blocker = {
+          name,
+          startTime: fractionToTimestamp(startF),
+          endTime: fractionToTimestamp(startF + oneHour),
+        };
+        if (daysOfWeek.length > 0) blocker.recurrence = { daysOfWeek };
+        addBlocker(blocker);
+        render();
       });
-      render();
     });
     blockerLabel.appendChild(quickAddBtn);
     blockerFixedRow.appendChild(blockerLabel);
@@ -541,10 +725,14 @@ export function render() {
     const blockerInfo = document.createElement('div');
     blockerInfo.className = 'md-tl__info md-tl__info--blocker';
 
-    if (blockers.length > 0) {
-      // Calculate total duration of all time blocks
+    // Total = sum of every visible instance (recurring blocks contribute
+    // each occurrence within the 192h window, not just the template).
+    const allInstances = blockers.flatMap((b, i) =>
+      expandBlockerInstances(b, i, windowStart, WINDOW_MS)
+    );
+    if (allInstances.length > 0) {
       const totalMinutes = Math.round(
-        blockers.reduce((sum, b) => sum + (b.endTime - b.startTime), 0) / 60000
+        allInstances.reduce((sum, inst) => sum + (inst.endTime - inst.startTime), 0) / 60000
       );
       const totalH = Math.floor(totalMinutes / 60);
       const totalM = totalMinutes % 60;
@@ -575,37 +763,55 @@ export function render() {
       blockerStrip.appendChild(cell);
     }
 
-    blockers.forEach((b, idx) => {
+    // Expand once per render. Recurring masters contribute one instance per
+    // matching weekday; non-recurring masters contribute a single instance.
+    // Each rendered DOM block carries its master `idx` so resize/drag/delete
+    // can mutate the series template.
+    const renderInstances = blockers.flatMap((b, idx) =>
+      expandBlockerInstances(b, idx, windowStart, WINDOW_MS)
+    );
+
+    renderInstances.forEach((instance) => {
+      const idx = instance.idx;
+      const b = blockers[idx];
+      const isRecurringInst = isRecurringBlocker(b);
       // Convert absolute timestamps → window-relative fractions for rendering & interaction
-      const bStartFraction = timeToFraction(b.startTime, windowStart);
-      const bEndFraction = timeToFraction(b.endTime, windowStart);
+      const bStartFraction = timeToFraction(instance.startTime, windowStart);
+      const bEndFraction = timeToFraction(instance.endTime, windowStart);
 
       const block = document.createElement('div');
-      block.className = 'md-tl__blocker';
+      block.className = 'md-tl__blocker' + (isRecurringInst ? ' md-tl__blocker--recurring' : '');
       block.style.left = `${bStartFraction * 100}%`;
       block.style.width = `${(bEndFraction - bStartFraction) * 100}%`;
-      block.title = b.name;
+      block.title = isRecurringInst ? `${b.name} (recurring)` : b.name;
 
       const blockLabel = document.createElement('span');
       blockLabel.className = 'md-tl__blocker-name';
       blockLabel.textContent = b.name;
       block.appendChild(blockLabel);
 
+      // Double-click opens the unified edit modal (replaces v2.3.1 prompt()).
       block.addEventListener('dblclick', (e) => {
         if (e.target.closest('.md-tl__blocker-handle')) return;
         e.stopPropagation();
         e.preventDefault();
-        const current = loadBlockers()[idx]?.name ?? b.name;
-        const next = window.prompt('Rename time block:', current);
-        if (next === null) return;
-        const trimmed = next.trim();
-        if (!trimmed || trimmed === current) return;
         const all = loadBlockers();
-        if (!all[idx]) return;
-        all[idx].name = trimmed;
-        saveBlockers(all);
-        focusedBlockerIdx = idx;
-        render();
+        const current = all[idx];
+        if (!current) return;
+        showBlockerModal({
+          title: 'Edit Time Block',
+          name: current.name,
+          daysOfWeek: current.recurrence?.daysOfWeek || [],
+        }, ({ name, daysOfWeek }) => {
+          const next = loadBlockers();
+          if (!next[idx]) return;
+          next[idx].name = name;
+          if (daysOfWeek.length > 0) next[idx].recurrence = { daysOfWeek };
+          else delete next[idx].recurrence;
+          saveBlockers(next);
+          focusedBlockerIdx = idx;
+          render();
+        });
       });
 
       // Resize handles on left and right edges
@@ -948,14 +1154,18 @@ export function render() {
   blockerBtn.addEventListener('click', (e) => {
     e.stopPropagation();
     if (!savedRange) return;
-    const name = prompt('Time Block name:', 'Available');
-    if (!name) return;
-    addBlocker({
-      name,
-      startTime: fractionToTimestamp(savedRange.startFraction),
-      endTime: fractionToTimestamp(savedRange.endFraction),
+    const range = savedRange;
+    showBlockerModal({ title: 'Save as Time Block' }, ({ name, daysOfWeek }) => {
+      const blocker = {
+        name,
+        startTime: fractionToTimestamp(range.startFraction),
+        endTime: fractionToTimestamp(range.endFraction),
+      };
+      if (daysOfWeek.length > 0) blocker.recurrence = { daysOfWeek };
+      addBlocker(blocker);
+      savedRange = null;
+      render();
     });
-    render();
   });
   wrapper.appendChild(blockerBtn);
 
@@ -1016,14 +1226,20 @@ export function render() {
     scrollPanel.scrollLeft = Math.max(0, currentPx - pastPx);
   }
 
+  let lastTickSecond = -1;
   animId = requestAnimationFrame(function tick() {
     if (!visible) return;
-    positionNowLine(wrapper, firstStrip);
-    if (!clocks.isOverrideActive()) {
-      const now = new Date();
-      positionIndicator(wrapper, firstStrip, now);
-      updateFooter(wrapper, firstStrip, now, rowData, clocks.getUse24h());
-      if (!savedRange) updateInfoColumn(fixedPanel, rowData, getCurrentFraction(now), clocks.getUse24h(), false, null);
+    const nowMs = Date.now();
+    const currentSecond = Math.floor(nowMs / 1000);
+    if (currentSecond !== lastTickSecond) {
+      lastTickSecond = currentSecond;
+      positionNowLine(wrapper, firstStrip);
+      if (!clocks.isOverrideActive()) {
+        const now = new Date(nowMs);
+        positionIndicator(wrapper, firstStrip, now);
+        updateFooter(wrapper, firstStrip, now, rowData, clocks.getUse24h());
+        if (!savedRange) updateInfoColumn(fixedPanel, rowData, getCurrentFraction(now), clocks.getUse24h(), false, null);
+      }
     }
     animId = requestAnimationFrame(tick);
   });
